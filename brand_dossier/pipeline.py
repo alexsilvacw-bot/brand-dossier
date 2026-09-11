@@ -65,9 +65,9 @@ def analyze_brand_posts(brand_id: int, model_id: str, effort: str | None, only_m
     def work(index: int, post: dict[str, Any]) -> PostResult:
         try:
             metrics = compute_caption_metrics(post.get("caption", "")).to_dict()
-            image = prepare_image(post["image_path"]) if post.get("image_path") else None
-            user_text = analysis_user_text(_post_ref(index), post.get("caption", ""), metrics)
-            analysis, usage = client.analyze_post(spec, effort, system, image, user_text)
+            images = [prepare_image(path) for path in post.get("images", []) if path]
+            user_text = analysis_user_text(_post_ref(index), post.get("caption", ""), metrics, n_images=len(images))
+            analysis, usage = client.analyze_post(spec, effort, system, images, user_text)
             u = usage.to_dict()
             cost = estimate_cost_usd(model_id, u["input_tokens"], u["output_tokens"],
                                      u["cache_read_input_tokens"], u["cache_creation_input_tokens"])
@@ -103,8 +103,8 @@ def collect_analysis_items(brand_id: int) -> list[dict[str, Any]]:
             continue
         items.append({
             "ref": _post_ref(i), "post_id": p["id"], "caption": p.get("caption", ""),
-            "image_path": p.get("image_path"), "metrics": a["metrics"], "analysis": a["analysis"],
-            "analysis_model": a["model"],
+            "image_path": p.get("image_path"), "images": p.get("images", []), "n_images": p.get("n_images", 0),
+            "metrics": a["metrics"], "analysis": a["analysis"], "analysis_model": a["model"],
         })
     return items
 

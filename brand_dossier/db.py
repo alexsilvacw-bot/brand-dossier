@@ -32,6 +32,15 @@ CREATE TABLE IF NOT EXISTS posts (
     created_at TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS post_images (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    post_id INTEGER NOT NULL REFERENCES posts(id) ON DELETE CASCADE,
+    position INTEGER NOT NULL,
+    image_path TEXT NOT NULL,
+    original_filename TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_post_images_post ON post_images(post_id, position);
+
 CREATE TABLE IF NOT EXISTS post_analyses (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     post_id INTEGER NOT NULL REFERENCES posts(id) ON DELETE CASCADE,
@@ -75,6 +84,13 @@ def init_db(path: Path = DB_PATH) -> None:
     IMAGES_DIR.mkdir(parents=True, exist_ok=True)
     with connect(path) as con:
         con.executescript(SCHEMA)
+        # Migração: posts antigos com uma imagem só em posts.image_path passam a ter linha em post_images.
+        con.execute(
+            """INSERT INTO post_images (post_id, position, image_path, original_filename)
+               SELECT p.id, 1, p.image_path, p.original_filename FROM posts p
+               WHERE p.image_path IS NOT NULL
+               AND NOT EXISTS (SELECT 1 FROM post_images i WHERE i.post_id = p.id)"""
+        )
 
 
 @contextmanager
@@ -125,21 +141,52 @@ def get_brand(brand_id: int) -> dict[str, Any] | None:
 
 def delete_brand(brand_id: int) -> None:
     for p in list_posts(brand_id):
-        _remove_image(p.get("image_path"))
+        for path in p.get("images", []):
+            _remove_image(path)
     with connect() as con:
         con.execute("DELETE FROM brands WHERE id=?", (brand_id,))
 
 
 # --- Posts ------------------------------------------------------------------
 
-def add_post(brand_id: int, image_path: str | None, original_filename: str | None, caption: str,
-             platform: str = "instagram") -> int:
+def add_post(brand_id: int, image_paths: list[str] | str | None, original_filenames: list[str] | str | None,
+             caption: str, platform: str = "instagram") -> int:
+    """Cria um post com 0, 1 ou N imagens (carrossel). A primeira imagem é a capa em posts.image_path."""
+    if isinstance(image_paths, str) or image_paths is None:
+        image_paths = [image_paths] if image_paths else []
+    if isinstance(original_filenames, str) or original_filenames is None:
+        original_filenames = [original_filenames] if original_filenames else []
+    names = list(original_filenames) + [None] * (len(image_paths) - len(original_filenames))
     with connect() as con:
         cur = con.execute(
             "INSERT INTO posts (brand_id, image_path, original_filename, caption, platform, created_at) VALUES (?,?,?,?,?,?)",
-            (brand_id, image_path, original_filename, caption.strip(), platform, _now()),
+            (brand_id, image_paths[0] if image_paths else None, names[0] if names else None,
+             caption.strip(), platform, _now()),
         )
-        return int(cur.lastrowid)
+        post_id = int(cur.lastrowid)
+        con.executemany(
+            "INSERT INTO post_images (post_id, position, image_path, original_filename) VALUES (?,?,?,?)",
+            [(post_id, i + 1, path, names[i]) for i, path in enumerate(image_paths)],
+        )
+        return post_id
+
+
+def _attach_images(con: sqlite3.Connection, posts: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    if not posts:
+        return posts
+    ids = [p["id"] for p in posts]
+    rows = _rows(con.execute(
+        f"SELECT post_id, position, image_path, original_filename FROM post_images "
+        f"WHERE post_id IN ({','.join('?' * len(ids))}) ORDER BY post_id, position", ids))
+    by_post: dict[int, list[dict[str, Any]]] = {}
+    for r in rows:
+        by_post.setdefault(int(r["post_id"]), []).append(r)
+    for p in posts:
+        imgs = by_post.get(p["id"], [])
+        p["images"] = [i["image_path"] for i in imgs]
+        p["image_filenames"] = [i["original_filename"] for i in imgs]
+        p["n_images"] = len(imgs)
+    return posts
 
 
 def update_post_caption(post_id: int, caption: str) -> None:
@@ -149,13 +196,16 @@ def update_post_caption(post_id: int, caption: str) -> None:
 
 def list_posts(brand_id: int) -> list[dict[str, Any]]:
     with connect() as con:
-        return _rows(con.execute("SELECT * FROM posts WHERE brand_id=? ORDER BY id", (brand_id,)))
+        posts = _rows(con.execute("SELECT * FROM posts WHERE brand_id=? ORDER BY id", (brand_id,)))
+        return _attach_images(con, posts)
 
 
 def get_post(post_id: int) -> dict[str, Any] | None:
     with connect() as con:
         row = con.execute("SELECT * FROM posts WHERE id=?", (post_id,)).fetchone()
-        return dict(row) if row else None
+        if not row:
+            return None
+        return _attach_images(con, [dict(row)])[0]
 
 
 def _remove_image(path: str | None) -> None:
@@ -169,7 +219,8 @@ def _remove_image(path: str | None) -> None:
 def delete_post(post_id: int) -> None:
     post = get_post(post_id)
     if post:
-        _remove_image(post.get("image_path"))
+        for path in post.get("images", []):
+            _remove_image(path)
     with connect() as con:
         con.execute("DELETE FROM posts WHERE id=?", (post_id,))
 

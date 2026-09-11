@@ -9,6 +9,7 @@ import csv
 import io
 import json
 import os
+import re
 
 import streamlit as st
 
@@ -166,37 +167,100 @@ def _parse_caption_csv(file) -> dict[str, str]:
     return out
 
 
+_SLIDE_RE = re.compile(r"^(.*?)[ _\-.(]*(\d+)\)?$")
+
+
+def _split_slide_name(filename: str) -> tuple[str, int | None]:
+    """'post3_2.jpg' -> ('post3', 2). Sem número no fim -> (stem, None)."""
+    stem = os.path.splitext(filename)[0].strip()
+    m = _SLIDE_RE.match(stem)
+    if m and m.group(1).strip():
+        return m.group(1).strip().lower(), int(m.group(2))
+    return stem.lower(), None
+
+
+def _default_groups(uploads: list, mode: str) -> dict[int, int]:
+    """Devolve {índice do upload: número do post}."""
+    if mode == "carrossel":
+        return {i: 1 for i in range(len(uploads))}
+    if mode == "nome":
+        groups: dict[str, int] = {}
+        out = {}
+        for i, up in enumerate(uploads):
+            prefix, num = _split_slide_name(up.name)
+            key = prefix if num is not None else f"__single_{i}"
+            out[i] = groups.setdefault(key, len(groups) + 1)
+        return out
+    return {i: i + 1 for i in range(len(uploads))}
+
+
+def _slide_sort_key(up) -> tuple[int, str]:
+    _, num = _split_slide_name(up.name)
+    return (num if num is not None else 0, up.name)
+
+
 def tab_posts(ctx: dict) -> None:
     st.header("Posts")
     if not ctx["brand_id"]:
         st.info("Cadastre e selecione uma marca primeiro.")
         return
     brand_id = ctx["brand_id"]
+    gen = st.session_state.get("uploader_gen", 0)
 
     st.subheader("Adicionar posts")
     uploads = st.file_uploader("Imagens dos posts", type=["png", "jpg", "jpeg", "webp"], accept_multiple_files=True,
-                               key=f"uploader_{st.session_state.get('uploader_gen', 0)}")
+                               key=f"uploader_{gen}")
     csv_file = st.file_uploader("Opcional: CSV com colunas filename e caption para preencher as legendas",
-                                type=["csv", "txt"], key=f"csv_{st.session_state.get('uploader_gen', 0)}")
+                                type=["csv", "txt"], key=f"csv_{gen}")
     prefill = _parse_caption_csv(csv_file) if csv_file else {}
 
     if uploads:
+        modes = {
+            "um": "Um post por imagem",
+            "carrossel": "Todas as imagens são um único carrossel",
+            "nome": "Agrupar pelo nome do arquivo (ex: post3_1, post3_2)",
+        }
+        mode = st.radio("Como agrupar as imagens", list(modes.keys()), format_func=lambda k: modes[k],
+                        horizontal=True, key=f"mode_{gen}")
+        defaults = _default_groups(uploads, mode)
+        manual = st.checkbox("Ajustar manualmente o número do post de cada imagem", key=f"manual_{gen}")
+        assignment = dict(defaults)
+        if manual:
+            cols = st.columns(4)
+            for i, up in enumerate(uploads):
+                with cols[i % 4]:
+                    st.image(up, width=110, caption=up.name)
+                    assignment[i] = int(st.number_input("Post nº", min_value=1, max_value=len(uploads),
+                                                        value=defaults[i], key=f"grp_{gen}_{i}", step=1))
+
+        groups: dict[int, list] = {}
+        for i, up in enumerate(uploads):
+            groups.setdefault(assignment[i], []).append(up)
+        ordered = [sorted(ups, key=_slide_sort_key) for _, ups in sorted(groups.items())]
+        n_carousels = sum(1 for g in ordered if len(g) > 1)
+        st.caption(f"{len(ordered)} post(s) a criar, {n_carousels} carrossel(éis).")
+
         with st.form("posts_form"):
             captions = {}
-            for i, up in enumerate(uploads):
-                c1, c2 = st.columns([1, 3])
+            for gi, ups in enumerate(ordered):
+                st.markdown(f"**Post {gi + 1}**" + (f" · carrossel com {len(ups)} slides" if len(ups) > 1 else ""))
+                c1, c2 = st.columns([2, 3])
                 with c1:
-                    st.image(up, width=160, caption=up.name)
+                    thumbs = st.columns(min(len(ups), 4))
+                    for k, up in enumerate(ups):
+                        with thumbs[k % len(thumbs)]:
+                            st.image(up, width=120, caption=f"{k + 1}. {up.name}" if len(ups) > 1 else up.name)
                 with c2:
-                    captions[i] = st.text_area(f"Legenda de {up.name}", height=140, key=f"cap_{up.name}_{i}",
-                                               value=prefill.get(up.name, ""), label_visibility="collapsed",
-                                               placeholder="Cole a legenda aqui. Pode ficar vazio se o post não tem texto.")
-            if st.form_submit_button(f"Adicionar {len(uploads)} post(s)"):
-                for i, up in enumerate(uploads):
-                    path = store_image(brand_id, up.name, up.getvalue())
-                    db.add_post(brand_id, path, up.name, captions.get(i, ""))
-                st.session_state["uploader_gen"] = st.session_state.get("uploader_gen", 0) + 1
-                st.success(f"{len(uploads)} post(s) adicionados.")
+                    default_cap = next((prefill[u.name] for u in ups if u.name in prefill), "")
+                    captions[gi] = st.text_area("Legenda", height=140, key=f"cap_{gen}_{gi}", value=default_cap,
+                                                label_visibility="collapsed",
+                                                placeholder="Cole a legenda aqui. Pode ficar vazio se o post não tem texto.")
+            if st.form_submit_button(f"Adicionar {len(ordered)} post(s)"):
+                for gi, ups in enumerate(ordered):
+                    paths = [store_image(brand_id, up.name, up.getvalue()) for up in ups]
+                    db.add_post(brand_id, paths, [up.name for up in ups], captions.get(gi, ""))
+                st.session_state["uploader_gen"] = gen + 1
+                st.success(f"{len(ordered)} post(s) adicionados.")
                 st.rerun()
 
     st.subheader("Posts cadastrados")
@@ -205,14 +269,15 @@ def tab_posts(ctx: dict) -> None:
         st.caption("Nenhum post ainda.")
         return
     analyses = db.latest_analyses(brand_id)
-    st.caption(f"{len(posts)} posts, {len(analyses)} analisados.")
+    n_car = sum(1 for p in posts if p.get("n_images", 0) > 1)
+    st.caption(f"{len(posts)} posts ({n_car} carrosséis), {len(analyses)} analisados.")
     for i, p in enumerate(posts, start=1):
         with st.container(border=True):
-            c1, c2, c3 = st.columns([1, 4, 1])
+            c1, c2, c3 = st.columns([2, 4, 1])
             with c1:
-                if p.get("image_path") and os.path.exists(p["image_path"]):
-                    st.image(p["image_path"], width=150)
-                st.caption(f"P{i} · {'analisado' if p['id'] in analyses else 'pendente'}")
+                _render_slides(p, width=110)
+                kind = f"carrossel · {p['n_images']} slides" if p.get("n_images", 0) > 1 else "imagem única"
+                st.caption(f"P{i} · {kind} · {'analisado' if p['id'] in analyses else 'pendente'}")
             with c2:
                 new_cap = st.text_area("Legenda", value=p.get("caption", ""), key=f"edit_{p['id']}", height=120,
                                        label_visibility="collapsed")
@@ -224,6 +289,17 @@ def tab_posts(ctx: dict) -> None:
                 if st.button("Remover", key=f"del_{p['id']}"):
                     db.delete_post(p["id"])
                     st.rerun()
+
+
+def _render_slides(p: dict, width: int = 110, max_cols: int = 4) -> None:
+    images = [x for x in p.get("images", []) if x and os.path.exists(x)]
+    if not images:
+        st.caption("sem imagem")
+        return
+    cols = st.columns(min(len(images), max_cols))
+    for k, path in enumerate(images):
+        with cols[k % len(cols)]:
+            st.image(path, width=width, caption=f"{k + 1}" if len(images) > 1 else None)
 
 
 # ---------------------------------------------------------------------------
@@ -274,7 +350,7 @@ def _render_analysis(a: dict) -> None:
             "cores": vis["cores_dominantes"], "texto_na_imagem": vis["texto_na_imagem"],
             "transcricao": vis["texto_na_imagem_transcricao"], "pessoas": vis["pessoas_presentes"],
             "marca_visivel": vis["marca_visivel"], "estilo": vis["palavras_de_estilo"],
-            "producao": vis["qualidade_de_producao"],
+            "producao": vis["qualidade_de_producao"], "estrutura_dos_slides": vis.get("estrutura_dos_slides", ""),
         })
     st.markdown(f"**Coerência imagem/legenda:** {a['coerencia_imagem_legenda']} · **Confiança:** {a['confianca']}")
     st.markdown(f"**Padrão reutilizável:** {a['padrao_reutilizavel']}")
@@ -334,12 +410,14 @@ def tab_analysis(ctx: dict) -> None:
         a = analyses.get(p["id"])
         if not a:
             continue
-        title = f"P{i} · {a['analysis']['conteudo']['tema_principal']} · {a['analysis']['legenda']['framework']} · {a['model']}"
+        kind = f" · carrossel {p['n_images']}x" if p.get("n_images", 0) > 1 else ""
+        title = f"P{i}{kind} · {a['analysis']['conteudo']['tema_principal']} · {a['analysis']['legenda']['framework']} · {a['model']}"
         with st.expander(title):
-            c1, c2 = st.columns([1, 4])
+            c1, c2 = st.columns([1, 3])
             with c1:
-                if p.get("image_path") and os.path.exists(p["image_path"]):
-                    st.image(p["image_path"], width=220)
+                _render_slides(p, width=200 if p.get("n_images", 0) <= 1 else 100, max_cols=2)
+                if p.get("n_images", 0) > 1:
+                    st.caption(f"Carrossel com {p['n_images']} slides")
                 m = a["metrics"]
                 st.caption(f"{m['words']} palavras · {m['sentences']} frases · {m['emojis']} emojis · "
                            f"{m['hashtags']} hashtags · densidade {m['density']}")

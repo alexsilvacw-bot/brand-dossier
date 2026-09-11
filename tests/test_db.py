@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
+from pathlib import Path
+
 from brand_dossier import db
 
 
@@ -103,3 +106,89 @@ def test_brand_cost_summary_soma_analises_e_dossies():
     assert costs["analyses_usd"] == 0.01
     assert costs["dossiers_usd"] == 0.02
     assert costs["total_usd"] == 0.03
+
+
+# --- Carrossel (várias imagens por post) -------------------------------------
+
+def test_add_post_com_lista_de_tres_caminhos_cria_carrossel_na_ordem():
+    brand_id = db.create_brand("Marca Carrossel", "Resumo", "Produto")
+    paths = ["/tmp/fake/img1.jpg", "/tmp/fake/img2.jpg", "/tmp/fake/img3.jpg"]
+    names = ["um.jpg", "dois.jpg", "tres.jpg"]
+    post_id = db.add_post(brand_id, paths, names, "Legenda carrossel")
+
+    post = db.get_post(post_id)
+    assert post["images"] == paths
+    assert post["image_filenames"] == names
+    assert post["n_images"] == 3
+    assert post["image_path"] == paths[0]  # a capa é a primeira imagem
+
+    with db.connect() as con:
+        rows = con.execute(
+            "SELECT position, image_path FROM post_images WHERE post_id=? ORDER BY position", (post_id,)
+        ).fetchall()
+    assert [(r["position"], r["image_path"]) for r in rows] == list(enumerate(paths, start=1))
+
+
+def test_add_post_com_string_unica_continua_funcionando():
+    brand_id = db.create_brand("Marca Única", "Resumo", "Produto")
+    post_id = db.add_post(brand_id, "/tmp/fake/unico.jpg", "unico.jpg", "Legenda")
+
+    post = db.get_post(post_id)
+    assert post["n_images"] == 1
+    assert post["images"] == ["/tmp/fake/unico.jpg"]
+    assert post["image_path"] == "/tmp/fake/unico.jpg"
+
+
+def test_add_post_com_none_devolve_zero_imagens():
+    brand_id = db.create_brand("Marca Sem Imagem", "Resumo", "Produto")
+    post_id = db.add_post(brand_id, None, None, "Legenda só texto")
+
+    post = db.get_post(post_id)
+    assert post["n_images"] == 0
+    assert post["images"] == []
+    assert post["image_path"] is None
+
+
+def test_delete_post_remove_todos_os_arquivos_do_carrossel(tmp_path):
+    brand_id = db.create_brand("Marca Delete", "Resumo", "Produto")
+    paths = []
+    for i in range(3):
+        p = tmp_path / f"slide{i}.jpg"
+        p.write_bytes(b"fake-image-bytes")
+        paths.append(str(p))
+    post_id = db.add_post(brand_id, paths, [f"slide{i}.jpg" for i in range(3)], "Legenda")
+
+    for p in paths:
+        assert Path(p).exists()
+
+    db.delete_post(post_id)
+
+    for p in paths:
+        assert not Path(p).exists()
+    assert db.get_post(post_id) is None
+
+
+def test_init_db_migra_posts_antigos_sem_post_images():
+    brand_id = db.create_brand("Marca Antiga", "Resumo", "Produto")
+    now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    with db.connect() as con:
+        cur = con.execute(
+            "INSERT INTO posts (brand_id, image_path, original_filename, caption, platform, created_at) "
+            "VALUES (?,?,?,?,?,?)",
+            (brand_id, "/tmp/fake/legado.jpg", "legado.jpg", "Legenda legado", "instagram", now),
+        )
+        post_id = int(cur.lastrowid)
+
+    # Post inserido direto via SQL, sem linha em post_images: simula um banco criado
+    # antes da migração de carrossel.
+    with db.connect() as con:
+        rows = con.execute("SELECT * FROM post_images WHERE post_id=?", (post_id,)).fetchall()
+    assert rows == []
+
+    db.init_db()
+
+    posts = db.list_posts(brand_id)
+    assert len(posts) == 1
+    assert posts[0]["id"] == post_id
+    assert posts[0]["n_images"] == 1
+    assert posts[0]["images"] == ["/tmp/fake/legado.jpg"]

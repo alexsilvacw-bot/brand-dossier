@@ -48,6 +48,10 @@ class VisualAnalysis(BaseModel):
     marca_visivel: bool = Field(description="Logo, produto ou identidade visual claramente presente")
     palavras_de_estilo: list[str] = Field(description="3 a 6 adjetivos de estilo visual, ex: limpo, saturado, rústico, corporativo")
     qualidade_de_producao: Literal["baixa", "media", "alta"]
+    estrutura_dos_slides: str = Field(
+        description="Só para carrossel: papel de cada slide na sequência (ex: capa com gancho, 3 slides de conteúdo, "
+                    "slide final com CTA) e como o texto se distribui. Vazio se o post tem uma imagem só"
+    )
 
 
 class CopyAnalysis(BaseModel):

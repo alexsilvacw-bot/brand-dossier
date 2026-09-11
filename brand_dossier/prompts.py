@@ -59,7 +59,8 @@ def analysis_system_prompt(brand: dict[str, Any]) -> str:
 - profundidade: superficial = só menciona o tema; medio = explica em linhas gerais; profundo = ensina com detalhe, passo a passo ou dado concreto.
 - tipo_de_valor: benefício central prometido. Opções: {_fmt_list(T.VALUE_PROPOSITION_TYPES)}.
 - estagio_de_consciencia (Schwartz): em que estágio está a pessoa para quem o post fala. Opções: {_fmt_list(T.AWARENESS_STAGES)}.
-- formato visual: Opções: {_fmt_list(T.VISUAL_FORMATS)}.
+- formato visual: Opções: {_fmt_list(T.VISUAL_FORMATS)}. Em carrossel, classifique pelo formato predominante dos slides.
+- Carrossel: quando o post tiver vários slides, eles chegam numerados ("Slide 1 de N"). Analise a sequência como uma peça única: a capa é o gancho visual, os slides do meio desenvolvem, o último costuma fechar com CTA. Descreva isso em estrutura_dos_slides e transcreva o texto de todos os slides em texto_na_imagem_transcricao, separando por slide.
 - persona_alvo: descreva a pessoa concreta para quem o post fala, inferida do conteúdo, e não o público genérico da marca.
 - padrao_reutilizavel: escreva como receita para outra IA reproduzir o tipo de post em outra marca. Não cite o nome da marca nem o produto.
 
@@ -68,15 +69,21 @@ Escreva todos os campos de texto livre em {_lang(brand.get("language", "pt-BR"))
 """
 
 
-def analysis_user_text(post_ref: str, caption: str, metrics: dict[str, Any]) -> str:
+def analysis_user_text(post_ref: str, caption: str, metrics: dict[str, Any], n_images: int = 1) -> str:
     caption_block = caption.strip() if caption and caption.strip() else "(sem legenda)"
+    if n_images == 0:
+        image_note = "Este post não tem imagem disponível. Analise só a legenda e marque os campos visuais com valores neutros."
+    elif n_images == 1:
+        image_note = "A imagem do post está acima."
+    else:
+        image_note = f"Este post é um carrossel com {n_images} slides, numerados acima na ordem de exibição."
     compact_metrics = {
         k: v for k, v in metrics.items()
         if k in ("words", "sentences", "avg_sentence_words", "paragraphs", "emojis", "hashtags", "hashtag_list",
                  "questions", "exclamations", "caps_words", "pronoun_strategy", "has_cta_pattern", "cta_matches",
                  "density", "reading_level", "punctuation_style", "urls", "mentions")
     }
-    return f"""Post {post_ref}. A imagem do post está acima.
+    return f"""Post {post_ref}. {image_note}
 
 <legenda>
 {caption_block}
@@ -123,7 +130,7 @@ Frameworks predominantes com frequência. Tipos de gancho com exemplos literais.
 - Coisas que esta marca nunca diria.
 
 ## 7. Estilo visual
-Formatos predominantes com frequência. Paleta. Composição típica. Quanto texto vai na imagem e como. Presença de pessoas e do produto. Qualidade de produção. Descreva 2 a 4 famílias visuais recorrentes, cada uma com posts de exemplo.
+Formatos predominantes com frequência. Paleta. Composição típica. Quanto texto vai na imagem e como. Presença de pessoas e do produto. Qualidade de produção. Descreva 2 a 4 famílias visuais recorrentes, cada uma com posts de exemplo. Se houver carrosséis: proporção na amostra, número típico de slides e a estrutura recorrente da sequência (capa, desenvolvimento, fechamento), com exemplos.
 
 ## 8. Quantidade de texto e profundidade
 Use os números da agregação. Distribuição de densidade. Profundidade predominante e quando a marca aprofunda. Relação entre formato visual e tamanho de legenda.

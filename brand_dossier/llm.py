@@ -77,6 +77,19 @@ def prepare_image(path: str | Path) -> ImagePayload:
     return ImagePayload("image/jpeg", base64.standard_b64encode(buf.getvalue()).decode("ascii"), *img.size)
 
 
+def build_user_content(images: list[ImagePayload], user_text: str) -> list[dict[str, Any]]:
+    """Blocos de conteúdo: imagens rotuladas por slide (quando há mais de uma) e o texto por último."""
+    content: list[dict[str, Any]] = []
+    n = len(images)
+    for i, img in enumerate(images, start=1):
+        if n > 1:
+            content.append({"type": "text", "text": f"Slide {i} de {n}:"})
+        content.append({"type": "image", "source": {"type": "base64", "media_type": img.media_type,
+                                                      "data": img.data_b64}})
+    content.append({"type": "text", "text": user_text})
+    return content
+
+
 def _first_text(content: list[Any]) -> str:
     return "".join(getattr(b, "text", "") for b in content if getattr(b, "type", "") == "text")
 
@@ -126,16 +139,12 @@ class LLMClient:
 
     # --- estágio 2: análise por post ---------------------------------------
 
-    def analyze_post(self, spec: ModelSpec, effort: str | None, system: str, image: ImagePayload | None,
+    def analyze_post(self, spec: ModelSpec, effort: str | None, system: str, images: list[ImagePayload],
                      user_text: str) -> tuple[dict[str, Any], Usage]:
         if self.mock:
-            return _mock_analysis(user_text), Usage(input_tokens=2500, output_tokens=900)
+            return _mock_analysis(user_text), Usage(input_tokens=2500 + 1500 * len(images), output_tokens=900)
 
-        content: list[dict[str, Any]] = []
-        if image is not None:
-            content.append({"type": "image", "source": {"type": "base64", "media_type": image.media_type,
-                                                          "data": image.data_b64}})
-        content.append({"type": "text", "text": user_text})
+        content = build_user_content(images, user_text)
         kwargs = self._base_kwargs(spec, effort, system, [{"role": "user", "content": content}], max_tokens=8000)
         kwargs.setdefault("output_config", {})["format"] = {
             "type": "json_schema",
@@ -210,6 +219,7 @@ def _mock_analysis(user_text: str) -> dict[str, Any]:
             "cores_dominantes": ["verde", "branco"], "texto_na_imagem": pick(T.AMOUNT_LEVELS),
             "texto_na_imagem_transcricao": "", "pessoas_presentes": pick([True, False]), "marca_visivel": True,
             "palavras_de_estilo": ["limpo", "corporativo", "iluminado"], "qualidade_de_producao": "alta",
+            "estrutura_dos_slides": "",
         },
         "legenda": {
             "framework": pick(T.COPY_FRAMEWORKS), "tipo_de_gancho": pick(T.HOOK_TYPES), "gancho_texto": "Você já perdeu produção?",

@@ -53,3 +53,20 @@ def test_agregacao_com_tres_itens():
         assert "posts" in persona
         assert isinstance(persona["posts"], list)
         assert persona["posts"], "cada persona deve referenciar ao menos um post"
+
+
+def test_carrosseis_com_n_images_1_1_4():
+    items = _build_items()
+    # Dois posts com uma imagem só, um carrossel (P3) com 4 slides.
+    items[0]["n_images"] = 1
+    items[1]["n_images"] = 1
+    items[2]["n_images"] = 4
+
+    agg = aggregate_analyses(items)
+    carrosseis = agg["visual"]["carrosseis"]
+
+    assert carrosseis["n"] == 1
+    assert carrosseis["pct"] == pytest.approx(33.3)
+    assert carrosseis["posts"] == ["P3"]
+    assert carrosseis["slides_media_nos_carrosseis"] == 4
+    assert carrosseis["slides_max"] == 4

@@ -13,7 +13,7 @@ import subprocess
 from typing import Any, Callable
 
 from .config import ModelSpec
-from .llm import ImagePayload, LLMError, Usage
+from .llm import ImagePayload, LLMError, Usage, build_user_content
 from .schemas import PostAnalysis, strict_json_schema
 
 ANALYSIS_TIMEOUT_S = 600
@@ -45,12 +45,8 @@ def _base_cmd(spec: ModelSpec, effort: str | None, system: str) -> list[str]:
     return cmd
 
 
-def _user_message(image: ImagePayload | None, text: str) -> str:
-    content: list[dict[str, Any]] = []
-    if image is not None:
-        content.append({"type": "image", "source": {"type": "base64", "media_type": image.media_type,
-                                                      "data": image.data_b64}})
-    content.append({"type": "text", "text": text})
+def _user_message(images: list[ImagePayload], text: str) -> str:
+    content = build_user_content(images, text)
     return json.dumps({"type": "user", "message": {"role": "user", "content": content}}, ensure_ascii=False) + "\n"
 
 
@@ -109,10 +105,10 @@ class ClaudeCodeClient:
 
     mock = False
 
-    def analyze_post(self, spec: ModelSpec, effort: str | None, system: str, image: ImagePayload | None,
+    def analyze_post(self, spec: ModelSpec, effort: str | None, system: str, images: list[ImagePayload],
                      user_text: str) -> tuple[dict[str, Any], Usage]:
         cmd = _base_cmd(spec, effort, system) + ["--json-schema", json.dumps(strict_json_schema(PostAnalysis))]
-        result = _run(cmd, _user_message(image, user_text), ANALYSIS_TIMEOUT_S)
+        result = _run(cmd, _user_message(images, user_text), ANALYSIS_TIMEOUT_S)
         data = result.get("structured_output")
         if data is None:
             raw = result.get("result", "")
@@ -129,7 +125,7 @@ class ClaudeCodeClient:
     def synthesize(self, spec: ModelSpec, effort: str | None, system: str, user_text: str,
                    on_text: Callable[[str], None] | None = None) -> tuple[str, Usage]:
         cmd = _base_cmd(spec, effort, system) + ["--include-partial-messages"]
-        result = _run(cmd, _user_message(None, user_text), SYNTHESIS_TIMEOUT_S, on_text=on_text)
+        result = _run(cmd, _user_message([], user_text), SYNTHESIS_TIMEOUT_S, on_text=on_text)
         text = (result.get("result") or "").strip()
         if not text:
             raise LLMError("Claude Code devolveu dossiê vazio.")

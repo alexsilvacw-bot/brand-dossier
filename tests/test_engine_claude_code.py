@@ -87,7 +87,7 @@ def test_analyze_post_usa_structured_output_quando_presente(monkeypatch):
 
     client = engine_claude_code.ClaudeCodeClient()
     spec = MODELS["claude-sonnet-5"]
-    data, usage = client.analyze_post(spec, "medium", "system", None, "legenda")
+    data, usage = client.analyze_post(spec, "medium", "system", [], "legenda")
 
     assert data == PostAnalysis.model_validate(mock_data).model_dump()
     assert usage.input_tokens == 2
@@ -110,7 +110,7 @@ def test_analyze_post_cai_para_json_loads_do_result_quando_sem_structured_output
 
     client = engine_claude_code.ClaudeCodeClient()
     spec = MODELS["claude-sonnet-5"]
-    data, usage = client.analyze_post(spec, "medium", "system", None, "legenda")
+    data, usage = client.analyze_post(spec, "medium", "system", [], "legenda")
 
     assert data == PostAnalysis.model_validate(mock_data).model_dump()
 
@@ -125,7 +125,7 @@ def test_analyze_post_levanta_llmerror_quando_nao_logado(monkeypatch):
     client = engine_claude_code.ClaudeCodeClient()
     spec = MODELS["claude-sonnet-5"]
     with pytest.raises(LLMError) as excinfo:
-        client.analyze_post(spec, "medium", "system", None, "legenda")
+        client.analyze_post(spec, "medium", "system", [], "legenda")
 
     assert "/login" in str(excinfo.value)
 

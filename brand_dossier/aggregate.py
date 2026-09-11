@@ -42,6 +42,8 @@ def aggregate_analyses(items: list[dict[str, Any]]) -> dict[str, Any]:
 
     words, sentences, avg_sentence, emojis, hashtags, paragraphs = [], [], [], [], [], []
     has_cta_pattern = has_cta_llm = has_hashtags = has_people = brand_visible = has_question = 0
+    slides: list[int] = []
+    carousel_refs: list[str] = []
 
     for it in items:
         a = it["analysis"]
@@ -91,6 +93,11 @@ def aggregate_analyses(items: list[dict[str, Any]]) -> dict[str, Any]:
 
         c_coherence[a["coerencia_imagem_legenda"]] += 1
         c_confidence[a["confianca"]] += 1
+
+        n_img = int(it.get("n_images", 1 if it.get("image_path") else 0) or 0)
+        slides.append(n_img)
+        if n_img > 1:
+            carousel_refs.append(ref)
 
         words.append(m.get("words", 0))
         sentences.append(m.get("sentences", 0))
@@ -158,6 +165,11 @@ def aggregate_analyses(items: list[dict[str, Any]]) -> dict[str, Any]:
             "qualidade_de_producao": _dist(c_quality, n), "cores_recorrentes": _dist(c_colors, n, 12),
             "palavras_de_estilo": _dist(c_style, n, 15),
             "pct_com_pessoas": pct(has_people), "pct_marca_visivel": pct(brand_visible),
+            "carrosseis": {
+                "n": len(carousel_refs), "pct": pct(len(carousel_refs)), "posts": carousel_refs,
+                "slides_media_nos_carrosseis": _avg([x for x in slides if x > 1]),
+                "slides_max": max(slides) if slides else 0,
+            },
         },
         "coerencia_imagem_legenda": _dist(c_coherence, n),
         "confianca_das_analises": _dist(c_confidence, n),

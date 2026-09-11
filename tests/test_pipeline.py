@@ -105,3 +105,46 @@ def test_fluxo_completo(brand_with_posts):
     assert costs["total_usd"] > 0
     assert costs["analyses_usd"] > 0
     assert costs["dossiers_usd"] > 0
+
+
+def test_fluxo_com_post_carrossel():
+    """Um post carrossel de 3 imagens deve ser analisado, agregado e sintetizado
+    como carrossel em todo o pipeline (estágios 2 e 3)."""
+    brand_id = db.create_brand(
+        name="Marca com Carrossel",
+        summary="Empresa fictícia para testar carrossel.",
+        products="Produto A",
+        audience="Pequenos empresários",
+    )
+
+    # Post simples.
+    path_simples = pipeline.store_image(brand_id, "capa.png", _png_bytes("RGB", (10, 10, 10)))
+    db.add_post(brand_id, path_simples, "capa.png", "Legenda do post simples.")
+
+    # Post carrossel: 3 slides PNG.
+    slide_paths = [
+        pipeline.store_image(brand_id, f"slide{i}.png", _png_bytes("RGB", (i * 40, i * 40, i * 40)))
+        for i in range(1, 4)
+    ]
+    slide_names = [f"slide{i}.png" for i in range(1, 4)]
+    carousel_post_id = db.add_post(brand_id, slide_paths, slide_names, "Legenda do carrossel de 3 slides.")
+
+    # --- estágio 2: análise por post (mock) ---
+    results = pipeline.analyze_brand_posts(
+        brand_id, DEFAULT_ANALYSIS_MODEL, DEFAULT_ANALYSIS_EFFORT, only_missing=True
+    )
+    assert len(results) == 2
+    assert all(r.ok for r in results)
+
+    # --- estágio 3: coleta dos itens agregados ---
+    items = pipeline.collect_analysis_items(brand_id)
+    item_carrossel = next(it for it in items if it["post_id"] == carousel_post_id)
+    assert item_carrossel["n_images"] == 3
+    assert len(item_carrossel["images"]) == 3
+
+    # --- estágio 3: síntese do dossiê ---
+    dossier_id = pipeline.build_dossier(brand_id, DEFAULT_SYNTHESIS_MODEL, DEFAULT_SYNTHESIS_EFFORT)
+    dossier = db.get_dossier(dossier_id)
+    assert dossier["post_count"] == 2
+
+    assert dossier["aggregate"]["visual"]["carrosseis"]["n"] == 1

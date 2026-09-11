@@ -53,6 +53,18 @@ A aplicação abre no navegador. Pela barra lateral é possível escolher o moto
 5. Analise os posts primeiro com Claude Haiku 4.5, o modelo mais barato, para validar o fluxo.
 6. Depois, gere o dossiê com Claude Sonnet 5 ou Claude Opus 5 na etapa de síntese.
 
+### Posts com várias imagens (carrossel)
+
+Um post pode ter mais de uma imagem, como um carrossel do Instagram. Ao enviar várias imagens de uma vez na aba de posts, escolha como elas devem ser agrupadas em posts:
+
+- **Um post por imagem**: cada imagem enviada se torna um post separado, com uma imagem só.
+- **Todas as imagens são um único carrossel**: todas as imagens do envio formam um único post carrossel, na ordem em que foram enviadas.
+- **Agrupar pelo nome do arquivo**: imagens cujo nome termina com um número, como `post3_1.jpg` e `post3_2.jpg`, são agrupadas no mesmo post carrossel e ordenadas por esse número. Arquivos sem número no final ficam sozinhos, cada um em seu próprio post.
+
+Em qualquer um dos três modos, o agrupamento sugerido pode ser ajustado marcando "Ajustar manualmente o número do post de cada imagem", que mostra cada imagem com um campo para digitar o número do post a que ela pertence.
+
+Na análise, os slides de um carrossel são enviados ao modelo em sequência (a primeira imagem é a capa, as do meio o desenvolvimento e a última o fechamento) e o texto presente em todas as imagens é transcrito, não só o da capa.
+
 ## Como funciona o pipeline
 
 A análise de cada marca passa por três estágios:
@@ -98,13 +110,14 @@ Na aba de posts é possível enviar, junto com as imagens, um CSV para preencher
 .venv/bin/python -m pytest
 ```
 
-Os testes (em `tests/`) cobrem métricas de legenda, geração e validação do schema JSON estrito, agregação, escolha do motor padrão, o motor Claude Code (com o subprocesso simulado, sem chamar o binário real) e o fluxo completo do pipeline (banco, análise, dossiê e exportação), sempre em modo simulado (`BRAND_DOSSIER_MOCK=1`) ou com dependências externas substituídas, sem chamar a API real nem o `claude` de verdade.
+Os testes (em `tests/`) cobrem métricas de legenda, geração e validação do schema JSON estrito, agregação (incluindo a agregação de carrosséis), montagem do conteúdo enviado ao modelo (imagens rotuladas por slide e o texto do prompt de análise), escolha do motor padrão, o motor Claude Code (com o subprocesso simulado, sem chamar o binário real), o fluxo completo do pipeline com posts simples e com carrossel (banco, análise, dossiê e exportação) e o agrupamento de imagens em posts na aba de upload (`_split_slide_name`, `_default_groups` e `_slide_sort_key` de `app.py`), sempre em modo simulado (`BRAND_DOSSIER_MOCK=1`) ou com dependências externas substituídas, sem chamar a API real nem o `claude` de verdade.
 
 ## Limitações do MVP
 
 - Não há autenticação nem separação de usuários: qualquer pessoa com acesso ao aplicativo vê e edita todas as marcas salvas no banco local.
 - O banco é SQLite em arquivo único; não é pensado para uso concorrente por várias pessoas ao mesmo tempo.
-- Só imagens são analisadas como conteúdo visual; não há suporte a vídeo ou carrossel com múltiplas imagens por post.
+- Só imagens são analisadas como conteúdo visual; não há suporte a vídeo.
+- O custo em tokens da análise por post cresce com o número de slides do carrossel, cerca de 1,5 mil tokens de entrada por slide adicional; carrosséis muito longos encarecem a análise proporcionalmente.
 - A qualidade da análise depende inteiramente do modelo de linguagem: erros de leitura de imagem, alucinação de detalhes ou classificações equivocadas nas listas fechadas de taxonomia não são verificados automaticamente.
 - Não há edição manual da análise gerada por post nem versionamento por post (só o dossiê final é versionado).
 - A exclusão de marca ou de post é definitiva, sem lixeira ou confirmação além do próprio clique na interface.
